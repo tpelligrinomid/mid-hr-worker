@@ -54,7 +54,21 @@ export const screenCandidate = task({
     });
 
     if (decision.verdict !== "fit") {
-      return { outcome: "not_fit" as const, candidate, decision };
+      // Still track them in ClickUp so recruiter has a record — status
+      // "NOT A FIT" lets it be filtered out of the active applicant view.
+      // No Slack; we keep Slack reserved for fits + missing-JD alerts.
+      const notFitTask = await createClickUpTask({
+        candidate,
+        decision,
+        status: "NOT A FIT",
+      });
+      return {
+        outcome: "not_fit" as const,
+        candidate,
+        decision,
+        clickupTaskId: notFitTask.id,
+        clickupUrl: notFitTask.url,
+      };
     }
 
     // 5. Good fit → ClickUp first (we need the URL for Slack), then Slack.

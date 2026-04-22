@@ -3,6 +3,7 @@ import { Candidate, FitDecision } from "../types";
 interface CreateTaskArgs {
   candidate: Candidate;
   decision: FitDecision;
+  status?: string;
 }
 
 interface CreatedTask {
@@ -13,6 +14,7 @@ interface CreatedTask {
 export async function createClickUpTask({
   candidate,
   decision,
+  status = "Applied",
 }: CreateTaskArgs): Promise<CreatedTask> {
   const token = process.env.CLICKUP_API_TOKEN;
   const listId = process.env.CLICKUP_LIST_ID;
@@ -26,7 +28,7 @@ export async function createClickUpTask({
   const body: Record<string, unknown> = {
     name: `${candidate.firstName} ${candidate.lastName} — ${candidate.position}`,
     markdown_description: description,
-    status: "Applied",
+    status,
   };
 
   if (linkedinFieldId) {
