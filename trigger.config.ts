@@ -17,6 +17,10 @@ export default defineConfig({
   },
   dirs: ["./trigger"],
   build: {
+    // proxy-agent is lazily required by apify-client's transitive deps;
+    // esbuild misses it in static analysis. Mark external so it resolves
+    // from node_modules at runtime in the container.
+    external: ["proxy-agent"],
     // Ship jobs/*.md markdown files alongside the task bundle so the task
     // can read them at runtime via fs.
     extensions: [additionalFiles({ files: ["jobs/**/*.md"] })],
