@@ -88,7 +88,7 @@ function detectGarbage(c: Candidate): string | null {
   }
 
   const why = c.whyFit.trim();
-  if (why.length < 30) return `low-effort "why fit" (${why.length} chars)`;
+  if (why.length < 10) return `low-effort "why fit" (${why.length} chars)`;
   if (/^(asdf|qwer|test|abcd|lorem|xxx|zzz)/i.test(why)) {
     return "nonsense 'why fit' answer";
   }
