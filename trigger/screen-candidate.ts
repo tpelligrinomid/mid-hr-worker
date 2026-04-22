@@ -1,4 +1,4 @@
-import { task, logger } from "@trigger.dev/sdk";
+import { task, logger } from "@trigger.dev/sdk/v3";
 import { TallyPayload, Candidate } from "../src/types";
 import { extractCandidate } from "../src/lib/tally";
 import { loadJobDescription } from "../src/lib/jobs";
