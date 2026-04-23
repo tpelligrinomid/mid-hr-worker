@@ -2,20 +2,85 @@ import { ApifyClient } from "apify-client";
 
 const DEFAULT_ACTOR = "dev_fusion~linkedin-profile-scraper";
 
+// Field shape returned by dev_fusion~linkedin-profile-scraper. Verified
+// against a real run on 2026-04-22; do not assume other actors return
+// the same keys.
+interface RawExperience {
+  title?: string;
+  companyName?: string | null;
+  companyIndustry?: string | null;
+  jobDescription?: string | null;
+  jobStartedOn?: string | null;
+  jobEndedOn?: string | null;
+  jobStillWorking?: boolean;
+  jobLocation?: string | null;
+  employmentType?: string | null;
+}
+
+interface RawEducation {
+  title?: string | null; // school
+  subtitle?: string | null; // degree / program
+  description?: string | null;
+  period?: {
+    startedOn?: { year?: number | null } | null;
+    endedOn?: { year?: number | null } | null;
+  } | null;
+}
+
+interface RawSkill {
+  title?: string;
+}
+
+interface RawProfile {
+  fullName?: string;
+  headline?: string;
+  about?: string | null;
+  addressWithCountry?: string;
+  addressCountryOnly?: string;
+  jobTitle?: string;
+  companyName?: string;
+  companyIndustry?: string;
+  currentJobDuration?: string;
+  totalExperienceYears?: number;
+  experiencesCount?: number;
+  experiences?: RawExperience[];
+  educations?: RawEducation[];
+  skills?: RawSkill[];
+  email?: string;
+}
+
+export interface LinkedInExperience {
+  title?: string;
+  company?: string;
+  industry?: string;
+  description?: string;
+  startedOn?: string;
+  endedOn?: string;
+  current?: boolean;
+  location?: string;
+}
+
+export interface LinkedInEducation {
+  school?: string;
+  program?: string;
+  startYear?: number;
+  endYear?: number;
+}
+
 export interface LinkedInProfile {
   url: string;
   fullName?: string;
   headline?: string;
-  location?: string;
   about?: string;
-  experiences?: Array<{
-    title?: string;
-    company?: string;
-    duration?: string;
-    description?: string;
-  }>;
-  education?: Array<{ school?: string; degree?: string }>;
-  skills?: string[];
+  location?: string;
+  currentTitle?: string;
+  currentCompany?: string;
+  currentIndustry?: string;
+  currentDuration?: string;
+  totalExperienceYears?: number;
+  experiences: LinkedInExperience[];
+  education: LinkedInEducation[];
+  skills: string[];
   raw: unknown;
 }
 
@@ -31,30 +96,54 @@ export async function scrapeLinkedIn(url: string): Promise<LinkedInProfile> {
   });
 
   const { items } = await client.dataset(run.defaultDatasetId).listItems();
-  const profile = items[0] as Record<string, unknown> | undefined;
+  const profile = items[0] as RawProfile | undefined;
   if (!profile) {
     throw new Error(`Apify returned no LinkedIn profile for ${url}`);
   }
 
   return {
     url,
-    fullName: pick(profile, "fullName", "name"),
-    headline: pick(profile, "headline", "occupation"),
-    location: pick(profile, "location", "geoLocationName"),
-    about: pick(profile, "about", "summary"),
-    experiences: (profile.experiences ?? profile.experience) as LinkedInProfile["experiences"],
-    education: (profile.educations ?? profile.education) as LinkedInProfile["education"],
-    skills: profile.skills as string[] | undefined,
+    fullName: profile.fullName?.trim() || undefined,
+    headline: profile.headline?.trim() || undefined,
+    about: profile.about?.trim() || undefined,
+    location: profile.addressWithCountry || profile.addressCountryOnly || undefined,
+    currentTitle: profile.jobTitle?.trim() || undefined,
+    currentCompany: profile.companyName?.trim() || undefined,
+    currentIndustry: profile.companyIndustry?.trim() || undefined,
+    currentDuration: profile.currentJobDuration?.trim() || undefined,
+    totalExperienceYears:
+      typeof profile.totalExperienceYears === "number"
+        ? profile.totalExperienceYears
+        : undefined,
+    experiences: (profile.experiences ?? []).map(mapExperience),
+    education: (profile.educations ?? []).map(mapEducation),
+    skills: (profile.skills ?? [])
+      .map((s) => s?.title?.trim())
+      .filter((s): s is string => Boolean(s)),
     raw: profile,
   };
 }
 
-function pick(obj: Record<string, unknown>, ...keys: string[]): string | undefined {
-  for (const k of keys) {
-    const v = obj[k];
-    if (typeof v === "string" && v.trim()) return v;
-  }
-  return undefined;
+function mapExperience(e: RawExperience): LinkedInExperience {
+  return {
+    title: e.title?.trim() || undefined,
+    company: e.companyName?.trim() || undefined,
+    industry: e.companyIndustry?.trim() || undefined,
+    description: e.jobDescription?.trim() || undefined,
+    startedOn: e.jobStartedOn?.trim() || undefined,
+    endedOn: e.jobEndedOn?.trim() || undefined,
+    current: Boolean(e.jobStillWorking),
+    location: e.jobLocation?.trim() || undefined,
+  };
+}
+
+function mapEducation(ed: RawEducation): LinkedInEducation {
+  return {
+    school: ed.title?.trim() || undefined,
+    program: ed.subtitle?.trim() || undefined,
+    startYear: ed.period?.startedOn?.year ?? undefined,
+    endYear: ed.period?.endedOn?.year ?? undefined,
+  };
 }
 
 export function formatLinkedInForPrompt(p: LinkedInProfile): string {
@@ -62,30 +151,62 @@ export function formatLinkedInForPrompt(p: LinkedInProfile): string {
   lines.push(`Name: ${p.fullName ?? "?"}`);
   lines.push(`Headline: ${p.headline ?? "?"}`);
   if (p.location) lines.push(`Location: ${p.location}`);
+  if (typeof p.totalExperienceYears === "number") {
+    lines.push(`Total experience (years): ${p.totalExperienceYears}`);
+  }
+
+  if (p.currentTitle || p.currentCompany) {
+    const dur = p.currentDuration ? ` (${p.currentDuration})` : "";
+    const ind = p.currentIndustry ? ` — ${p.currentIndustry}` : "";
+    lines.push(
+      `Current role: ${p.currentTitle ?? "?"} @ ${p.currentCompany ?? "?"}${dur}${ind}`,
+    );
+  }
+
   if (p.about) lines.push(`\nAbout:\n${p.about.slice(0, 2000)}`);
 
-  if (p.experiences?.length) {
+  if (p.experiences.length) {
     lines.push("\nExperience:");
     for (const e of p.experiences.slice(0, 10)) {
-      lines.push(
-        `- ${e.title ?? "?"} @ ${e.company ?? "?"}${e.duration ? ` (${e.duration})` : ""}`,
-      );
+      const range = formatDateRange(e.startedOn, e.endedOn, e.current);
+      const company = e.company ?? "?";
+      const industry = e.industry ? ` [${e.industry}]` : "";
+      lines.push(`- ${e.title ?? "?"} @ ${company}${range ? ` (${range})` : ""}${industry}`);
       if (e.description) {
-        lines.push(`    ${e.description.slice(0, 400).replace(/\s+/g, " ")}`);
+        const collapsed = e.description.replace(/\s+/g, " ").slice(0, 500);
+        lines.push(`    ${collapsed}`);
       }
     }
   }
 
-  if (p.education?.length) {
+  if (p.education.length) {
     lines.push("\nEducation:");
-    for (const e of p.education.slice(0, 5)) {
-      lines.push(`- ${e.degree ?? ""} @ ${e.school ?? "?"}`.trim());
+    for (const ed of p.education.slice(0, 5)) {
+      const years = formatYearRange(ed.startYear, ed.endYear);
+      const program = ed.program ? ` — ${ed.program}` : "";
+      lines.push(`- ${ed.school ?? "?"}${program}${years ? ` (${years})` : ""}`);
     }
   }
 
-  if (p.skills?.length) {
+  if (p.skills.length) {
     lines.push(`\nSkills: ${p.skills.slice(0, 30).join(", ")}`);
   }
 
   return lines.join("\n");
+}
+
+function formatDateRange(
+  start?: string,
+  end?: string,
+  current?: boolean,
+): string {
+  if (!start && !end) return "";
+  if (current || !end) return `${start ?? "?"} – present`;
+  return `${start ?? "?"} – ${end}`;
+}
+
+function formatYearRange(start?: number, end?: number): string {
+  if (!start && !end) return "";
+  if (!end) return `${start} – present`;
+  return `${start ?? "?"} – ${end}`;
 }
