@@ -69,6 +69,12 @@ export interface LinkedInEducation {
 
 export interface LinkedInProfile {
   url: string;
+  // true when the Apify actor returned usable profile data. false when the
+  // dataset was empty (locked/private profile, anti-bot block, bad URL, etc.)
+  // — in that case the candidate should be routed to NEEDS REVIEW rather
+  // than evaluated as if the LinkedIn is verified-missing.
+  ok: boolean;
+  error?: string;
   fullName?: string;
   headline?: string;
   about?: string;
@@ -84,10 +90,27 @@ export interface LinkedInProfile {
   raw: unknown;
 }
 
-export async function scrapeLinkedIn(url: string): Promise<LinkedInProfile> {
+// Strip tracking/share params and fragments that confuse the scraper.
+// e.g. ".../in/yasin-yana%C3%A7-008114335?utm_source=share&utm_medium=android_app"
+// becomes ".../in/yasin-yana%C3%A7-008114335"
+export function cleanLinkedInUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    u.search = "";
+    u.hash = "";
+    let out = u.toString();
+    if (out.endsWith("/")) out = out.slice(0, -1);
+    return out;
+  } catch {
+    return raw;
+  }
+}
+
+export async function scrapeLinkedIn(rawUrl: string): Promise<LinkedInProfile> {
   const token = process.env.APIFY_TOKEN;
   if (!token) throw new Error("APIFY_TOKEN not configured");
 
+  const url = cleanLinkedInUrl(rawUrl);
   const actorId = process.env.APIFY_LINKEDIN_ACTOR || DEFAULT_ACTOR;
   const client = new ApifyClient({ token });
 
@@ -98,11 +121,12 @@ export async function scrapeLinkedIn(url: string): Promise<LinkedInProfile> {
   const { items } = await client.dataset(run.defaultDatasetId).listItems();
   const profile = items[0] as RawProfile | undefined;
   if (!profile) {
-    throw new Error(`Apify returned no LinkedIn profile for ${url}`);
+    return emptyProfile(url, "Apify returned no profile data (locked/private, blocked, or invalid URL)");
   }
 
   return {
     url,
+    ok: true,
     fullName: profile.fullName?.trim() || undefined,
     headline: profile.headline?.trim() || undefined,
     about: profile.about?.trim() || undefined,
@@ -121,6 +145,18 @@ export async function scrapeLinkedIn(url: string): Promise<LinkedInProfile> {
       .map((s) => s?.title?.trim())
       .filter((s): s is string => Boolean(s)),
     raw: profile,
+  };
+}
+
+function emptyProfile(url: string, error: string): LinkedInProfile {
+  return {
+    url,
+    ok: false,
+    error,
+    experiences: [],
+    education: [],
+    skills: [],
+    raw: null,
   };
 }
 
@@ -147,6 +183,9 @@ function mapEducation(ed: RawEducation): LinkedInEducation {
 }
 
 export function formatLinkedInForPrompt(p: LinkedInProfile): string {
+  if (!p.ok) {
+    return `(LinkedIn profile could not be fetched — ${p.error ?? "unknown reason"}. Evaluate the candidate from pitch + portfolio only. Do NOT penalize them for unverifiable LinkedIn data; route to human review if promising.)`;
+  }
   const lines: string[] = [];
   lines.push(`Name: ${p.fullName ?? "?"}`);
   lines.push(`Headline: ${p.headline ?? "?"}`);

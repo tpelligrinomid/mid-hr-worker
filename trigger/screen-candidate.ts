@@ -42,7 +42,8 @@ export const screenCandidate = task({
       fetchPortfolio(candidate.portfolioUrl),
     ]);
     logger.log("Enrichment complete", {
-      linkedin: Boolean(linkedin.fullName),
+      linkedinOk: linkedin.ok,
+      linkedinError: linkedin.error,
       portfolioOk: portfolio.ok,
     });
 
@@ -52,6 +53,25 @@ export const screenCandidate = task({
       verdict: decision.verdict,
       score: decision.fitScore,
     });
+
+    // 5. If LinkedIn scrape failed, Claude's decision is based on partial
+    // signal. Always land these in NEEDS REVIEW so a human can verify —
+    // don't trust an auto-reject when we couldn't see the resume.
+    if (!linkedin.ok) {
+      const reviewTask = await createClickUpTask({
+        candidate,
+        decision,
+        status: "NEEDS REVIEW",
+      });
+      return {
+        outcome: "needs_review" as const,
+        reason: linkedin.error ?? "LinkedIn data unavailable",
+        candidate,
+        decision,
+        clickupTaskId: reviewTask.id,
+        clickupUrl: reviewTask.url,
+      };
+    }
 
     if (decision.verdict !== "fit") {
       // Still track them in ClickUp so recruiter has a record — status
@@ -71,7 +91,7 @@ export const screenCandidate = task({
       };
     }
 
-    // 5. Good fit → ClickUp first (we need the URL for Slack), then Slack.
+    // 6. Good fit → ClickUp first (we need the URL for Slack), then Slack.
     const clickupTask = await createClickUpTask({ candidate, decision });
     await notifyGoodFit({
       candidate,
