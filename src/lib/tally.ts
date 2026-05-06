@@ -55,13 +55,8 @@ export function extractCandidate(payload: TallyPayload): Candidate {
   );
   const salary = findField(payload, "Expected monthly salary (in USD)")?.value;
 
-  // Dropdown field: value is [id], option text lives in the options array.
-  const positionField = findField(payload, "Position");
-  const selectedId = Array.isArray(positionField?.value)
-    ? positionField.value[0]
-    : positionField?.value;
-  const positionText =
-    positionField?.options?.find((o) => o.id === selectedId)?.text ?? "";
+  // Hidden field populated from the URL param `?position=...`.
+  const positionText = String(findField(payload, "position")?.value ?? "").trim();
 
   return {
     firstName,
